@@ -22,7 +22,7 @@ class GaussianDiffusionTrainer(nn.Module):
 
         self.model = model
         self.T = T
-
+        # 计算α、α_bar、β
         self.register_buffer(
             'betas', torch.linspace(beta_1, beta_T, T).double())
         alphas = 1. - self.betas
@@ -38,11 +38,14 @@ class GaussianDiffusionTrainer(nn.Module):
         """
         Algorithm 1.
         """
+        # 随机采样数量和该批次图片数量相同的时间步t
         t = torch.randint(self.T, size=(x_0.shape[0], ), device=x_0.device)
         noise = torch.randn_like(x_0)
+        # 根据x_0、noise、t生成x_t
         x_t = (
             extract(self.sqrt_alphas_bar, t, x_0.shape) * x_0 +
             extract(self.sqrt_one_minus_alphas_bar, t, x_0.shape) * noise)
+        # 查看真实情况和预测情况的差距，用于计算loss
         loss = F.mse_loss(self.model(x_t, t), noise, reduction='none')
         return loss
 
@@ -64,13 +67,15 @@ class GaussianDiffusionSampler(nn.Module):
 
         self.register_buffer('posterior_var', self.betas * (1. - alphas_bar_prev) / (1. - alphas_bar))
 
+    # 从当前时间步预测前一个时间步的图像均值
     def predict_xt_prev_mean_from_eps(self, x_t, t, eps):
         assert x_t.shape == eps.shape
         return (
             extract(self.coeff1, t, x_t.shape) * x_t -
             extract(self.coeff2, t, x_t.shape) * eps
         )
-
+    
+    # 返回预测的前一个时间步的图像均值 xt_prev_mean 和当前时间步的方差 var
     def p_mean_variance(self, x_t, t):
         # below: only log_variance is used in the KL computations
         var = torch.cat([self.posterior_var[1:2], self.betas[1:]])
@@ -86,18 +91,23 @@ class GaussianDiffusionSampler(nn.Module):
         Algorithm 2.
         """
         x_t = x_T
+        # 多步迭代，得到最终清晰图像，T从大到小
         for time_step in reversed(range(self.T)):
             print(time_step)
+            # 多个相同的t，数量和批次量一样
             t = x_t.new_ones([x_T.shape[0], ], dtype=torch.long) * time_step
+            # 获取前一步的均值和当前的方差
             mean, var= self.p_mean_variance(x_t=x_t, t=t)
             # no noise when t == 0
             if time_step > 0:
                 noise = torch.randn_like(x_t)
             else:
                 noise = 0
+            # 更新图片
             x_t = mean + torch.sqrt(var) * noise
             assert torch.isnan(x_t).int().sum() == 0, "nan in tensor."
         x_0 = x_t
+        # 最终返回生成的图像，并将其裁剪到 [-1, 1] 范围内
         return torch.clip(x_0, -1, 1)   
 
 
